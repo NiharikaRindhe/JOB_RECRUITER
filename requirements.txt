@@ -1,4 +1,6 @@
-fastapi
-uvicorn
 pydantic
 google-generativeai
+openpyxl
+fastapi 
+uvicorn 
+pandas
