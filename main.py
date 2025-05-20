@@ -238,6 +238,219 @@ def parse_questions_to_df(text):
     return pd.DataFrame(rows)
 
 # FastAPI endpoint for generating MCQs from Job Description JSON
+# @app.post("/generate_mcqs/")
+# async def generate_mcqs(jd: JobDescription):
+#     try:
+#         # Extract job title, skills, and experience from JD
+#         job_title, skills, experience_years = extract_details_from_jd(jd.dict())
+
+#         # Determine difficulty based on experience
+#         if experience_years <= 2:
+#             levels = ["Basic", "Medium"]
+#         elif experience_years <= 5:
+#             levels = ["Medium"]
+#         else:
+#             levels = ["High"]
+
+#         # Generate MCQs
+#         df = generate_full_mcqs(skills, levels)
+
+#         # Save the DataFrame to a BytesIO buffer using openpyxl
+#         output = io.BytesIO()
+#         with pd.ExcelWriter(output, engine='openpyxl') as writer:
+#             df.to_excel(writer, index=False)
+#         output.seek(0)
+
+#         # Return the file as a StreamingResponse
+#         return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+#                                  headers={"Content-Disposition": "attachment; filename=mcq_output.xlsx"})
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
+# ---------- 🔶 MCQ GENERATOR ----------
+def extract_details_from_jd(jd_json):
+    job_title = jd_json.get("job_title", "").strip()
+    skills = jd_json.get("skills_required", [])
+    experience_str = jd_json.get("experience", "0 Years")
+    experience_years = 0
+    match = re.search(r"(\d+)\s*Years?", experience_str)
+    if match:
+        experience_years = int(match.group(1))
+    return job_title, skills, experience_years
+
+def create_prompt(skills, levels, question_count):
+    skills_text = ', '.join(skills)
+    levels_text = ', '.join(levels)
+    return f"""
+Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
+
+Skills: {skills_text}
+Levels: {levels_text}
+
+Instructions:
+- Each question must include:
+    - Skill
+    - Level
+    - Question
+    - 4 options labeled A) to D)
+    - Correct answer (A/B/C/D)
+- Format strictly like this (no extra text or explanation):
+
+Skill: <skill>
+Level: <Basic/Medium/High>
+Question: <question text>
+A) <option1>
+B) <option2>
+C) <option3>
+D) <option4>
+Answer: <A/B/C/D>
+
+Start now.
+"""
+
+def generate_batch(skills, levels, question_count=25):
+    model = genai.GenerativeModel("gemini-2.0-flash-lite")
+    prompt = create_prompt(skills, levels, question_count)
+    response = model.generate_content(prompt)
+    all_text = response.text
+    generated_questions = all_text.count("Question:")
+    while generated_questions < question_count:
+        additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
+        all_text += additional_response.text
+        generated_questions = all_text.count("Question:")
+    return all_text
+
+def generate_full_mcqs(skills, levels):
+    batch1 = generate_batch(skills, levels, 25)
+    batch2 = generate_batch(skills, levels, 25)
+    full_output = batch1 + "\n\n" + batch2
+    df = parse_questions_to_df(full_output)
+    return df
+
+def parse_questions_to_df(text):
+    pattern = r"Skill: (.*?)\nLevel: (.*?)\nQuestion: (.*?)\nA\) (.*?)\nB\) (.*?)\nC\) (.*?)\nD\) (.*?)\nAnswer: (.*?)\n"
+    matches = re.findall(pattern, text, re.DOTALL)
+    rows = []
+    for match in matches:
+        correct_letter = match[7].strip().upper()
+        correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
+        rows.append({
+            "skill": match[0].strip(),
+            "skill_level": match[1].strip(),
+            "question": match[2].strip(),
+            "option1": match[3].strip(),
+            "option2": match[4].strip(),
+            "option3": match[5].strip(),
+            "option4": match[6].strip(),
+            "correct_answer": correct_answer
+        })
+    return pd.DataFrame(rows)
+
+# FastAPI endpoint for generating MCQs from Job Description JSON
+# @app.post("/generate_mcqs/")
+# async def generate_mcqs(jd: JobDescription):
+#     try:
+#         # Extract job title, skills, and experience from JD
+#         job_title, skills, experience_years = extract_details_from_jd(jd.dict())
+
+#         # Determine difficulty based on experience
+#         if experience_years <= 2:
+#             levels = ["Basic", "Medium"]
+#         elif experience_years <= 5:
+#             levels = ["Medium"]
+#         else:
+#             levels = ["High"]
+
+#         # Generate MCQs
+#         df = generate_full_mcqs(skills, levels)
+
+#         # Convert DataFrame to JSON format
+#         mcq_json = df.to_dict(orient="records")
+
+#         # Return the MCQs as JSON
+#         return {"mcqs": mcq_json}
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
+# ---------- 🔶 MCQ GENERATOR ----------
+def extract_details_from_jd(jd_json):
+    job_title = jd_json.get("job_title", "").strip()
+    skills = jd_json.get("skills_required", [])
+    experience_str = jd_json.get("experience", "0 Years")
+    experience_years = 0
+    match = re.search(r"(\d+)\s*Years?", experience_str)
+    if match:
+        experience_years = int(match.group(1))
+    return job_title, skills, experience_years
+
+def create_prompt(skills, levels, question_count):
+    skills_text = ', '.join(skills)
+    levels_text = ', '.join(levels)
+    return f"""
+Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
+
+Skills: {skills_text}
+Levels: {levels_text}
+
+Instructions:
+- Each question must include:
+    - Skill
+    - Level
+    - Question
+    - 4 options labeled A) to D)
+    - Correct answer (A/B/C/D)
+- Format strictly like this (no extra text or explanation):
+
+Skill: <skill>
+Level: <Basic/Medium/High>
+Question: <question text>
+A) <option1>
+B) <option2>
+C) <option3>
+D) <option4>
+Answer: <A/B/C/D>
+
+Start now.
+"""
+
+def generate_batch(skills, levels, question_count=25):
+    model = genai.GenerativeModel("gemini-2.0-flash-lite")
+    prompt = create_prompt(skills, levels, question_count)
+    response = model.generate_content(prompt)
+    all_text = response.text
+    generated_questions = all_text.count("Question:")
+    while generated_questions < question_count:
+        additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
+        all_text += additional_response.text
+        generated_questions = all_text.count("Question:")
+    return all_text
+
+def generate_full_mcqs(skills, levels):
+    batch1 = generate_batch(skills, levels, 25)
+    batch2 = generate_batch(skills, levels, 25)
+    full_output = batch1 + "\n\n" + batch2
+    df = parse_questions_to_df(full_output)
+    return df
+
+def parse_questions_to_df(text):
+    pattern = r"Skill: (.*?)\nLevel: (.*?)\nQuestion: (.*?)\nA\) (.*?)\nB\) (.*?)\nC\) (.*?)\nD\) (.*?)\nAnswer: (.*?)\n"
+    matches = re.findall(pattern, text, re.DOTALL)
+    rows = []
+    for match in matches:
+        correct_letter = match[7].strip().upper()
+        correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
+        rows.append({
+            "skill": match[0].strip(),
+            "skill_level": match[1].strip(),
+            "question": match[2].strip(),
+            "option1": match[3].strip(),
+            "option2": match[4].strip(),
+            "option3": match[5].strip(),
+            "option4": match[6].strip(),
+            "correct_answer": correct_answer
+        })
+    return pd.DataFrame(rows)
+
+# FastAPI endpoint for generating MCQs from Job Description JSON
 @app.post("/generate_mcqs/")
 async def generate_mcqs(jd: JobDescription):
     try:
@@ -255,14 +468,13 @@ async def generate_mcqs(jd: JobDescription):
         # Generate MCQs
         df = generate_full_mcqs(skills, levels)
 
-        # Save the DataFrame to a BytesIO buffer using openpyxl
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
+        # Convert DataFrame to JSON format
+        mcq_json = df.to_dict(orient="records")
 
-        # Return the file as a StreamingResponse
-        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                 headers={"Content-Disposition": "attachment; filename=mcq_output.xlsx"})
+        # Return the MCQs as JSON
+        return {"mcqs": mcq_json}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
+
+
