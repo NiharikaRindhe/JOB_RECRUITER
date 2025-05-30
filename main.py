@@ -3,7 +3,7 @@ import json
 import re
 import io
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
