@@ -10,33 +10,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import google.generativeai as genai
 
-# 🔐 Gemini API Key
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY", "AIzaSyBrc0vyseVt5Ed3-BK7jobOAN4I12R1E8Q"))
+# Configure Gemini API
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBrc0vyseVt5Ed3-BK7jobOAN4I12R1E8Q")
+genai.configure(api_key=GEMINI_API_KEY)
 
-# 🔧 Gemini Model Config
-generation_config = {
-    "temperature": 0.7,
-    "top_p": 0.9,
-    "top_k": 40,
-    "max_output_tokens": 2048,
-    "response_mime_type": "text/plain",
-}
-
-# Models
-model_flash = genai.GenerativeModel(
-    model_name="gemini-2.0-flash-lite",
-    generation_config=generation_config,
-)
-
-model_flash = genai.GenerativeModel(
-    model_name="gemini-2.0-flash-lite",
-    generation_config=generation_config,
-)
-
-# FastAPI App
+# Initialize FastAPI app
 app = FastAPI()
 
-# ---------- 🔶 MODELS ----------
+# ---------------------------- MODELS ----------------------------
 class AnalyzeRequest(BaseModel):
     jd: Dict[str, Any]
     resume: Dict[str, Any]
@@ -50,7 +31,18 @@ class JobDescription(BaseModel):
     skills_required: list
     experience: str
 
-# ---------- 🔶 ANALYSIS ----------
+class JobInput(BaseModel):
+    job_title: str
+    location: str
+    job_description: str
+    skills: str
+    experience: str
+
+# ------------------------ CANDIDATE ANALYSIS ------------------------
+@app.get("/")
+async def root():
+    return {"message": "FastAPI is alive!"}
+
 def analyze_candidate(jd, resume):
     prompt = f"""
 You are an AI assistant that helps recruiters analyze how well a candidate fits a job based on the Job Description (JD) and Resume.
@@ -97,13 +89,19 @@ You are an AI assistant that helps recruiters analyze how well a candidate fits 
 - **Interview is not recommended** for this roleand also write why .
 """
     try:
-        chat = model_flash.start_chat(history=[])
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        chat = model.start_chat(history=[])
         response = chat.send_message(prompt)
         return response.text
     except Exception as e:
         return f"⚠️ API Error: {str(e)}"
 
-# ---------- 🔶 QUESTION GENERATION ----------
+@app.post("/CANDIDATE_ANALYSIS")
+async def analyser(request: AnalyzeRequest):
+    result = analyze_candidate(request.jd, request.resume)
+    return {"analysis": result}
+
+# ------------------------ QUESTION GENERATOR ------------------------
 def generate_interviewer_questions(resume, jd=None):
     jd_section = f"\nJob Description:\n{json.dumps(jd, indent=2)}" if jd else ""
     source_instruction = (
@@ -115,7 +113,7 @@ def generate_interviewer_questions(resume, jd=None):
     prompt = f"""
 You are a senior interviewer preparing a mock interview for a candidate.
 
-🎯 Based on the resume{' and job description' if jd else ''}, infer the most suitable role or domain.
+🌟 Based on the resume{' and job description' if jd else ''}, infer the most suitable role or domain.
 Then generate **20 interview questions with full, descriptive answers**:
 - For technical roles: prioritize domain-specific 70 % technical questions 30% Nontechnical questions.
 - For non-technical roles: include a mix of domain-relevant and behavioral questions.
@@ -130,323 +128,29 @@ Then generate **20 interview questions with full, descriptive answers**:
 - Ensure Q and A are on separate lines
 - Infer answers professionally even if information is limited
 - Write the answers in short. 
-# {source_instruction}
+{source_instruction}
 
-# {jd_section}
+{jd_section}
 
-# Resume:
-# {json.dumps(resume, indent=2)}
+Resume:
+{json.dumps(resume, indent=2)}
 
-# Now generate only the 20 questions accordingly.
+Now generate only the 20 questions accordingly.
 """
     try:
-        chat = model_flash.start_chat(history=[])
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        chat = model.start_chat(history=[])
         response = chat.send_message(prompt)
         return response.text.strip()
     except Exception as e:
         return f"⚠️ API Error: {str(e)}"
-
-# # ---------- 🔶 ENDPOINTS ----------
-@app.post("/CANDIDATE_ANALYSIS")
-async def analyser(request: AnalyzeRequest):
-    result = analyze_candidate(request.jd, request.resume)
-    return {"analysis": result}
 
 @app.post("/GENERATE_QUESTIONS")
 async def generate_questions(request: QuestionRequest):
     result = generate_interviewer_questions(request.resume, request.jd)
     return {"questions": result}
 
-
-# ---------- 🔶 MCQ GENERATOR ----------
-def extract_details_from_jd(jd_json):
-    job_title = jd_json.get("job_title", "").strip()
-    skills = jd_json.get("skills_required", [])
-    experience_str = jd_json.get("experience", "0 Years")
-    experience_years = 0
-    match = re.search(r"(\d+)\s*Years?", experience_str)
-    if match:
-        experience_years = int(match.group(1))
-    return job_title, skills, experience_years
-
-def create_prompt(skills, levels, question_count):
-    skills_text = ', '.join(skills)
-    levels_text = ', '.join(levels)
-    return f"""
-Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
-
-Skills: {skills_text}
-Levels: {levels_text}
-
-Instructions:
-- Each question must include:
-    - Skill
-    - Level
-    - Question
-    - 4 options labeled A) to D)
-    - Correct answer (A/B/C/D)
-- Format strictly like this (no extra text or explanation):
-
-Skill: <skill>
-Level: <Basic/Medium/High>
-Question: <question text>
-A) <option1>
-B) <option2>
-C) <option3>
-D) <option4>
-Answer: <A/B/C/D>
-
-Start now.
-"""
-
-def generate_batch(skills, levels, question_count=25):
-    model = genai.GenerativeModel("gemini-2.0-flash-lite")
-    prompt = create_prompt(skills, levels, question_count)
-    response = model.generate_content(prompt)
-    all_text = response.text
-    generated_questions = all_text.count("Question:")
-    while generated_questions < question_count:
-        additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
-        all_text += additional_response.text
-        generated_questions = all_text.count("Question:")
-    return all_text
-
-def generate_full_mcqs(skills, levels):
-    batch1 = generate_batch(skills, levels, 25)
-    batch2 = generate_batch(skills, levels, 25)
-    full_output = batch1 + "\n\n" + batch2
-    df = parse_questions_to_df(full_output)
-    return df
-
-def parse_questions_to_df(text):
-    pattern = r"Skill: (.*?)\nLevel: (.*?)\nQuestion: (.*?)\nA\) (.*?)\nB\) (.*?)\nC\) (.*?)\nD\) (.*?)\nAnswer: (.*?)\n"
-    matches = re.findall(pattern, text, re.DOTALL)
-    rows = []
-    for match in matches:
-        correct_letter = match[7].strip().upper()
-        correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
-        rows.append({
-            "skill": match[0].strip(),
-            "skill_level": match[1].strip(),
-            "question": match[2].strip(),
-            "option1": match[3].strip(),
-            "option2": match[4].strip(),
-            "option3": match[5].strip(),
-            "option4": match[6].strip(),
-            "correct_answer": correct_answer
-        })
-    return pd.DataFrame(rows)
-#MCQ_Gnerator
-# def extract_details_from_jd(jd_json):
-#     job_title = jd_json.get("job_title", "").strip()
-#     skills = jd_json.get("skills_required", [])
-#     experience_str = jd_json.get("experience", "0 Years")
-#     experience_years = 0
-#     match = re.search(r"(\d+)\s*Years?", experience_str)
-#     if match:
-#         experience_years = int(match.group(1))
-#     return job_title, skills, experience_years
-
-# def create_prompt(skills, levels, question_count):
-#     skills_text = ', '.join(skills)
-#     levels_text = ', '.join(levels)
-#     return f"""
-# Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
-
-# Skills: {skills_text}
-# Levels: {levels_text}
-
-# Instructions:
-# - Each question must include:
-#     - Skill
-#     - Level
-#     - Question
-#     - 4 options labeled A) to D)
-#     - Correct answer (A/B/C/D)
-# - Format strictly like this (no extra text or explanation):
-
-# Skill: <skill>
-# Level: <Basic/Medium/High>
-# Question: <question text>
-# A) <option1>
-# B) <option2>
-# C) <option3>
-# D) <option4>
-# Answer: <A/B/C/D>
-
-# Start now.
-# """
-
-# def generate_batch(skills, levels, question_count=25):
-#     model = genai.GenerativeModel("gemini-2.0-flash-lite")
-#     prompt = create_prompt(skills, levels, question_count)
-#     response = model.generate_content(prompt)
-#     all_text = response.text
-#     generated_questions = all_text.count("Question:")
-#     while generated_questions < question_count:
-#         additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
-#         all_text += additional_response.text
-#         generated_questions = all_text.count("Question:")
-#     return all_text
-
-# def generate_full_mcqs(skills, levels):
-#     batch1 = generate_batch(skills, levels, 25)
-#     batch2 = generate_batch(skills, levels, 25)
-#     full_output = batch1 + "\n\n" + batch2
-#     df = parse_questions_to_df(full_output)
-#     return df
-
-# def parse_questions_to_df(text):
-#     pattern = r"Skill: (.*?)\nLevel: (.*?)\nQuestion: (.*?)\nA\) (.*?)\nB\) (.*?)\nC\) (.*?)\nD\) (.*?)\nAnswer: (.*?)\n"
-#     matches = re.findall(pattern, text, re.DOTALL)
-#     rows = []
-#     for match in matches:
-#         correct_letter = match[7].strip().upper()
-#         correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
-#         rows.append({
-#             "skill": match[0].strip(),
-#             "skill_level": match[1].strip(),
-#             "question": match[2].strip(),
-#             "option1": match[3].strip(),
-#             "option2": match[4].strip(),
-#             "option3": match[5].strip(),
-#             "option4": match[6].strip(),
-#             "correct_answer": correct_answer
-#         })
-#     return pd.DataFrame(rows)
-
-# # FastAPI endpoint for generating MCQs from Job Description JSON
-# # @app.post("/generate_mcqs/")
-# # async def generate_mcqs(jd: JobDescription):
-# #     try:
-# #         # Extract job title, skills, and experience from JD
-# #         job_title, skills, experience_years = extract_details_from_jd(jd.dict())
-
-# #         # Determine difficulty based on experience
-# #         if experience_years <= 2:
-# #             levels = ["Basic", "Medium"]
-# #         elif experience_years <= 5:
-# #             levels = ["Medium"]
-# #         else:
-# #             levels = ["High"]
-
-# #         # Generate MCQs
-# #         df = generate_full_mcqs(skills, levels)
-
-# #         # Convert DataFrame to JSON format
-# #         mcq_json = df.to_dict(orient="records")
-
-# #         # Return the MCQs as JSON
-# #         return {"mcqs": mcq_json}
-
-# #     except Exception as e:
-# #         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
-# # ---------- 🔶 MCQ GENERATOR ----------
-# def extract_details_from_jd(jd_json):
-#     job_title = jd_json.get("job_title", "").strip()
-#     skills = jd_json.get("skills_required", [])
-#     experience_str = jd_json.get("experience", "0 Years")
-#     experience_years = 0
-#     match = re.search(r"(\d+)\s*Years?", experience_str)
-#     if match:
-#         experience_years = int(match.group(1))
-#     return job_title, skills, experience_years
-
-# def create_prompt(skills, levels, question_count):
-#     skills_text = ', '.join(skills)
-#     levels_text = ', '.join(levels)
-#     return f"""
-# Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
-
-# Skills: {skills_text}
-# Levels: {levels_text}
-
-# Instructions:
-# - Each question must include:
-#     - Skill
-#     - Level
-#     - Question
-#     - 4 options labeled A) to D)
-#     - Correct answer (A/B/C/D)
-# - Format strictly like this (no extra text or explanation):
-
-# Skill: <skill>
-# Level: <Basic/Medium/High>
-# Question: <question text>
-# A) <option1>
-# B) <option2>
-# C) <option3>
-# D) <option4>
-# Answer: <A/B/C/D>
-
-# Start now.
-# """
-
-# def generate_batch(skills, levels, question_count=25):
-#     model = genai.GenerativeModel("gemini-2.0-flash-lite")
-#     prompt = create_prompt(skills, levels, question_count)
-#     response = model.generate_content(prompt)
-#     all_text = response.text
-#     generated_questions = all_text.count("Question:")
-#     while generated_questions < question_count:
-#         additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
-#         all_text += additional_response.text
-#         generated_questions = all_text.count("Question:")
-#     return all_text
-
-# def generate_full_mcqs(skills, levels):
-#     batch1 = generate_batch(skills, levels, 25)
-#     batch2 = generate_batch(skills, levels, 25)
-#     full_output = batch1 + "\n\n" + batch2
-#     df = parse_questions_to_df(full_output)
-#     return df
-
-# def parse_questions_to_df(text):
-#     pattern = r"Skill: (.*?)\nLevel: (.*?)\nQuestion: (.*?)\nA\) (.*?)\nB\) (.*?)\nC\) (.*?)\nD\) (.*?)\nAnswer: (.*?)\n"
-#     matches = re.findall(pattern, text, re.DOTALL)
-#     rows = []
-#     for match in matches:
-#         correct_letter = match[7].strip().upper()
-#         correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
-#         rows.append({
-#             "skill": match[0].strip(),
-#             "skill_level": match[1].strip(),
-#             "question": match[2].strip(),
-#             "option1": match[3].strip(),
-#             "option2": match[4].strip(),
-#             "option3": match[5].strip(),
-#             "option4": match[6].strip(),
-#             "correct_answer": correct_answer
-#         })
-#     return pd.DataFrame(rows)
-
-# # FastAPI endpoint for generating MCQs from Job Description JSON
-# @app.post("/generate_mcqs/")
-# async def generate_mcqs(jd: JobDescription):
-#     try:
-#         # Extract job title, skills, and experience from JD
-#         job_title, skills, experience_years = extract_details_from_jd(jd.dict())
-
-#         # Determine difficulty based on experience
-#         if experience_years <= 2:
-#             levels = ["Basic", "Medium"]
-#         elif experience_years <= 5:
-#             levels = ["Medium"]
-#         else:
-#             levels = ["High"]
-
-#         # Generate MCQs
-#         df = generate_full_mcqs(skills, levels)
-
-#         # Convert DataFrame to JSON format
-#         mcq_json = df.to_dict(orient="records")
-
-#         # Return the MCQs as JSON
-#         return {"mcqs": mcq_json}
-
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
-
+# ------------------------ MCQ GENERATOR ------------------------
 def extract_details_from_jd(jd_json):
     job_title = jd_json.get("job_title", "").strip()
     skills = jd_json.get("skills_required", [])
@@ -461,18 +165,10 @@ def create_prompt(skills, levels, question_count):
     skills_text = ', '.join(skills)
     levels_text = ', '.join(levels)
 
-    # Adjust prompt for high difficulty to generate tougher, reasoning-based questions
     if "High" in levels_text:
-        difficulty_instructions = """
-        Generate complex and tricky questions that require multi-step reasoning, involve advanced concepts, and assess a deeper understanding.
-        Avoid simple or straightforward questions.
-        Provide 4 options with one clearly incorrect answer, one correct answer, and two that are tricky but logically sound. Ensure the difficulty is reflected in the conceptual depth of the questions.
-        """
+        difficulty = "Generate complex and tricky questions that require multi-step reasoning."
     else:
-        difficulty_instructions = """
-        Generate questions that test fundamental understanding and basic to intermediate knowledge of the skill.
-        Ensure the difficulty is balanced and the answer choices are not overly simple.
-        """
+        difficulty = "Generate questions that test fundamental understanding."
 
     return f"""
 Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
@@ -481,7 +177,7 @@ Skills: {skills_text}
 Levels: {levels_text}
 
 Instructions:
-{difficulty_instructions}
+{difficulty}
 
 - Each question must include:
     - Skill
@@ -510,17 +206,15 @@ def generate_batch(skills, levels, question_count=15):
     all_text = response.text
     generated_questions = all_text.count("Question:")
     while generated_questions < question_count:
-        additional_response = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
-        all_text += additional_response.text
+        additional = model.generate_content(create_prompt(skills, levels, question_count - generated_questions))
+        all_text += additional.text
         generated_questions = all_text.count("Question:")
     return all_text
 
 def generate_full_mcqs(skills, levels):
-    # Generate exactly 30 questions (alternating between Basic and Medium)
-    batch1 = generate_batch(skills, levels, 15)  # First batch of 15 questions
-    batch2 = generate_batch(skills, levels, 15)  # Second batch of 15 questions
-    full_output = batch1 + "\n\n" + batch2
-    df = parse_questions_to_df(full_output)
+    batch1 = generate_batch(skills, levels, 15)
+    batch2 = generate_batch(skills, levels, 15)
+    df = parse_questions_to_df(batch1 + "\n\n" + batch2)
     return df
 
 def parse_questions_to_df(text):
@@ -529,11 +223,7 @@ def parse_questions_to_df(text):
     rows = []
     for match in matches:
         correct_letter = match[7].strip().upper()
-
-        # Ensure there is only one correct answer and map it logically
         correct_answer = match[3:7][ord(correct_letter) - 65] if correct_letter in "ABCD" else "Unknown"
-
-        # Add the parsed question and options to the rows
         rows.append({
             "skill": match[0].strip(),
             "skill_level": match[1].strip(),
@@ -542,34 +232,40 @@ def parse_questions_to_df(text):
             "option2": match[4].strip(),
             "option3": match[5].strip(),
             "option4": match[6].strip(),
-            "correct_answer": correct_answer  # Ensure that only one correct answer is given
+            "correct_answer": correct_answer
         })
     return pd.DataFrame(rows)
 
-# FastAPI endpoint for generating MCQs from Job Description JSON
 @app.post("/generate_mcqs/")
 async def generate_mcqs(jd: JobDescription):
     try:
-        # Extract job title, skills, and experience from JD
         job_title, skills, experience_years = extract_details_from_jd(jd.dict())
-
-        # Alternate difficulty levels for Basic and Medium
-        levels = []
-        if experience_years <= 2:
-            levels = ["Basic", "Medium"]
-        elif experience_years <= 5:
-            levels = ["Medium"]
-        else:
-            levels = ["High"]
-        
-        # Generate MCQs
+        levels = ["Basic", "Medium"] if experience_years <= 2 else ["Medium"] if experience_years <= 5 else ["High"]
         df = generate_full_mcqs(skills, levels)
-
-        # Convert DataFrame to JSON format
-        mcq_json = df.to_dict(orient="records")
-
-        # Return the MCQs as JSON
-        return {"mcqs": mcq_json}
-
+        return {"mcqs": df.to_dict(orient="records")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating MCQs: {str(e)}")
+
+# ------------------------ SALARY PREDICTION ------------------------
+def build_prompt(data: JobInput) -> str:
+    return (
+        f"You are a salary prediction engine.\n"
+        f"Your ONLY task is to return an estimated annual salary range in **Indian Rupees (INR)**.\n"
+        f"DO NOT explain anything. DO NOT add any extra text. DO NOT use bullet points. JUST output the salary range.\n"
+        f"Always return the salary range in this format exactly: 8,00,000–12,00,000 INR\n\n"
+        f"Job Title: {data.job_title}\n"
+        f"Location: {data.location}\n"
+        f"Experience: {data.experience}\n"
+        f"Skills: {data.skills}\n"
+        f"Job Description: {data.job_description}\n"
+    )
+
+@app.post("/predict_salary/")
+async def predict_salary(data: JobInput):
+    try:
+        prompt = build_prompt(data)
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+        response = model.generate_content(prompt)
+        return {"predicted_salary_range": response.text.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
