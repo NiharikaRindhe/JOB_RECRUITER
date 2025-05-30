@@ -33,9 +33,9 @@ class JobDescription(BaseModel):
 
 class JobInput(BaseModel):
     job_title: str
-    location: str
+    location: List[str]
     job_description: str
-    skills: str
+    skills: List[str]
     experience: str
 
 # ------------------------ CANDIDATE ANALYSIS ------------------------
