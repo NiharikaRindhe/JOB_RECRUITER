@@ -420,7 +420,7 @@ async def generate_interviewer_questions_async(resume: dict, jd: dict = None, re
     🌟 Based on the resume{' and job description' if jd else ''}, infer the most suitable role or domain.
     Then generate **20 interview questions with full, descriptive answers**:
     - For technical roles: prioritize domain-specific 70% technical questions 30% Non-technical questions.
-    - For non-technical roles: include a mix of domain-relevant and behavioral questions.
+    - For non-technical roles: include a mix of situational and behavioral questions.
 
     ✅ Format:
     - Use clear section headers as needed (Technical, Non Technical) for technical roles only
