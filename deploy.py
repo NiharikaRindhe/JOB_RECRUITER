@@ -456,6 +456,7 @@ async def generate_batch_async(skills: list, levels: list, question_count: int =
 
     prompt = f"""
     Generate exactly {question_count} unique MCQ interview questions using a mix of the following skills and levels.
+    make sure that each question have single option is corrct and do not repeat same questions.
 
     Skills: {skills_text}
     Levels: {levels_text}
